@@ -11,7 +11,6 @@
         .card:hover { transform: translateY(-2px); box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
         .prediction-correct { border: 3px solid #10b981; }
         .prediction-wrong { border: 3px solid #ef4444; }
-        .date-selected { background: #3b82f6; }
     </style>
 </head>
 <body class="bg-gray-900 text-white min-h-screen">
@@ -48,13 +47,13 @@
 
     <!-- 主要內容區域 -->
     <div class="container mx-auto px-4">
-        <!-- 預測 vs 結果 對照區 -->
+        <!-- 即時報價與預測對照區 -->
         <div class="bg-gray-800 rounded-xl p-4 mb-4 border border-gray-700">
-            <h2 class="text-lg font-semibold mb-3">🎯 預測 vs 結果 對照</h2>
+            <h2 class="text-lg font-semibold mb-3">🎯 今日報價與預測</h2>
             
-            <!-- 對照卡片 -->
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4" id="predictionCards">
-                <!-- 动态生成 -->
+            <!-- 即時報價卡片 -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4" id="priceCards">
+                <div class="text-gray-500">載入中...</div>
             </div>
             
             <!-- 詳細比較表 -->
@@ -63,10 +62,10 @@
                     <thead>
                         <tr class="text-gray-400 border-b border-gray-700">
                             <th class="text-left py-2">股票</th>
-                            <th class="text-center py-2">開盤前預測</th>
-                            <th class="text-center py-2">收盤結果</th>
+                            <th class="text-center py-2">現價</th>
                             <th class="text-center py-2">漲跌幅</th>
-                            <th class="text-center py-2">預測結果</th>
+                            <th class="text-center py-2">AI預測</th>
+                            <th class="text-center py-2">信心度</th>
                         </tr>
                     </thead>
                     <tbody id="comparisonTable">
@@ -74,26 +73,19 @@
                     </tbody>
                 </table>
             </div>
-            
-            <!-- 儲存按鈕（僅當天） -->
-            <div class="mt-4 flex justify-end" id="saveButtonContainer">
-                <button onclick="saveTodayPrediction()" class="px-4 py-2 bg-green-600 rounded hover:bg-green-700">
-                    💾 儲存今日預測
-                </button>
-            </div>
         </div>
 
         <!-- K線圖區域 -->
         <div class="bg-gray-800 rounded-xl p-4 mb-4 border border-gray-700">
             <div class="flex justify-between items-center mb-3">
-                <h2 class="text-lg font-semibold">📊 K線走勢圖</h2>
+                <h2 class="text-lg font-semibold">📊 K線走勢圖 - <span id="chartStockName"></span></h2>
                 <div class="flex gap-2">
                     <button onclick="changePeriod('1D')" class="px-3 py-1 text-sm bg-blue-600 rounded hover:bg-blue-700">日K</button>
                     <button onclick="changePeriod('1W')" class="px-3 py-1 text-sm bg-gray-700 rounded hover:bg-gray-600">週K</button>
                     <button onclick="changePeriod('1M')" class="px-3 py-1 text-sm bg-gray-700 rounded hover:bg-gray-600">月K</button>
                 </div>
             </div>
-            <div id="chartContainer" class="h-80 w-full"></div>
+            <div id="chartContainer" class="h-96 w-full"></div>
         </div>
 
         <!-- 技術指標 -->
@@ -174,22 +166,37 @@
         let chart = null;
         let candleSeries = null;
         let candleData = [];
+        let stockRealtimeData = {};
         
-        // 本地儲存 key
         const STORAGE_KEY = 'stock_prediction_history';
 
         // 初始化
         async function init() {
-            // 設定今天日期
             document.getElementById('datePicker').value = currentDate;
+            await loadAllStockData();  // 載入所有股票即時數據
             await loadStockTabs();
             await loadPredictionComparison();
-            await loadKline();
             initChart();
             loadHistory();
+            updateDisplayDate();
         }
 
-        // 切換日期
+        // 從 API 載入所有股票即時數據
+        async function loadAllStockData() {
+            try {
+                const res = await fetch(`${API_BASE}/dashboard`);
+                const data = await res.json();
+                
+                if (data && data.predictions) {
+                    data.predictions.forEach(p => {
+                        stockRealtimeData[p.stock_code] = p;
+                    });
+                }
+            } catch (e) {
+                console.log('無法獲取即時數據，使用備用數據');
+            }
+        }
+
         function changeDate(delta) {
             const date = new Date(document.getElementById('datePicker').value);
             date.setDate(date.getDate() + delta);
@@ -198,24 +205,13 @@
             onDateChange(currentDate);
         }
 
-        // 日期變更
         async function onDateChange(date) {
             currentDate = date;
             updateDisplayDate();
             await loadPredictionComparison();
             await loadIndicators();
-            
-            // 檢查是否為今天
-            const today = new Date().toISOString().split('T')[0];
-            const saveBtn = document.getElementById('saveButtonContainer');
-            if (date === today) {
-                saveBtn.style.display = 'block';
-            } else {
-                saveBtn.style.display = 'none';
-            }
         }
 
-        // 更新顯示日期
         function updateDisplayDate() {
             const date = new Date(currentDate + 'T00:00:00');
             const twDate = date.toLocaleDateString('zh-TW', { 
@@ -227,90 +223,36 @@
             document.getElementById('displayDate').textContent = twDate;
         }
 
-        // 儲存今日預測
-        function saveTodayPrediction() {
-            const history = getHistory();
-            const today = new Date().toISOString().split('T')[0];
-            
-            // 獲取當前預測數據
-            const predictions = STOCKS.map(stock => {
-                return {
-                    code: stock.code,
-                    name: stock.name,
-                    prediction: Math.random() > 0.5 ? '漲' : '跌',
-                    confidence: Math.floor(Math.random() * 20 + 80),
-                    result: null,  // 收盤後更新
-                    changePct: null
-                };
-            });
-            
-            // 儲存（或更新）記錄
-            history[today] = {
-                date: today,
-                predictions: predictions,
-                savedAt: new Date().toISOString()
-            };
-            
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
-            alert('✅ 預測已儲存！');
-            loadHistory();
-        }
-
-        // 獲取歷史記錄
         function getHistory() {
             const data = localStorage.getItem(STORAGE_KEY);
             return data ? JSON.parse(data) : {};
         }
 
-        // 載入歷史記錄
         function loadHistory() {
             const history = getHistory();
             const historyList = document.getElementById('historyList');
-            
             const dates = Object.keys(history).sort().reverse();
             
             if (dates.length === 0) {
-                historyList.innerHTML = '<div class="text-gray-500">尚無歷史記錄，請先儲存今日預測</div>';
+                historyList.innerHTML = '<div class="text-gray-500">尚無歷史記錄</div>';
                 return;
             }
             
-            historyList.innerHTML = dates.map(date => {
-                const record = history[date];
-                const correctCount = record.predictions.filter(p => p.result && p.prediction === p.result).length;
-                const total = record.predictions.filter(p => p.result).length;
-                const accuracy = total > 0 ? Math.round((correctCount / total) * 100) : '--';
-                
-                return `
-                    <div class="bg-gray-700 rounded-lg p-3 cursor-pointer hover:bg-gray-600" onclick="viewHistory('${date}')">
-                        <div class="flex justify-between items-center">
-                            <div>
-                                <div class="font-bold">${date}</div>
-                                <div class="text-sm text-gray-400">${record.predictions.length} 支股票</div>
-                            </div>
-                            <div class="text-right">
-                                <div class="text-lg font-bold ${accuracy !== '--' ? 'text-green-400' : 'text-gray-400'}">${accuracy}%</div>
-                                <div class="text-xs text-gray-500">${accuracy !== '--' ? '準確率' : '待結算'}</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
+            historyList.innerHTML = dates.map(date => `
+                <div class="bg-gray-700 rounded-lg p-3 cursor-pointer hover:bg-gray-600" onclick="viewHistory('${date}')">
+                    <div class="font-bold">${date}</div>
+                </div>
+            `).join('');
         }
 
-        // 查看歷史記錄
         async function viewHistory(date) {
             currentDate = date;
             document.getElementById('datePicker').value = date;
             await loadPredictionComparison();
             await loadIndicators();
-            
-            document.getElementById('saveButtonContainer').style.display = 'none';
-            
-            // 滾到頂部
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        // 載入股票標籤
         async function loadStockTabs() {
             const tabsContainer = document.getElementById('stockTabs');
             tabsContainer.innerHTML = STOCKS.map(stock => `
@@ -319,76 +261,42 @@
                     ${stock.code} ${stock.name}
                 </button>
             `).join('');
+            
+            document.getElementById('chartStockName').textContent = STOCKS.find(s => s.code === currentStock)?.name || currentStock;
         }
 
-        // 選擇股票
         async function selectStock(code) {
             currentStock = code;
             loadStockTabs();
             await Promise.all([
                 loadPredictionComparison(),
-                loadKline(),
                 loadIndicators()
             ]);
             updateChart();
         }
 
-        // 載入預測 vs 結果對照
+        // 載入報價與預測
         async function loadPredictionComparison() {
-            const cardsContainer = document.getElementById('predictionCards');
+            const priceCards = document.getElementById('priceCards');
             const tableBody = document.getElementById('comparisonTable');
             
-            // 嘗試從本地歷史獲取
-            const history = getHistory();
-            let stockData = history[currentDate]?.predictions || null;
-            
-            // 如果沒有歷史記錄，從 API 獲取
-            if (!stockData) {
-                try {
-                    const res = await fetch(`${API_BASE}/dashboard`);
-                    const data = await res.json();
-                    if (data && data.predictions) {
-                        stockData = data.predictions.map(p => ({
-                            code: p.stock_code,
-                            name: STOCKS.find(s => s.code === p.stock_code)?.name || p.stock_code,
-                            prediction: p.prediction,
-                            confidence: p.confidence,
-                            changePct: p.change_pct
-                        }));
-                    }
-                } catch (e) {
-                    console.log('使用模擬數據');
-                }
-            }
-            
-            // 模擬數據（如果都沒有）
-            if (!stockData) {
-                stockData = STOCKS.map(stock => ({
-                    code: stock.code,
-                    name: stock.name,
-                    prediction: '漲',
-                    confidence: 85,
-                    changePct: -1.5
-                }));
-            }
-            
-            let cardsHTML = '';
+            let priceHTML = '';
             let tableHTML = '';
-            let correctCount = 0;
             
-            stockData.forEach(stock => {
-                const change = parseFloat(stock.changePct) || 0;
-                const actual = change >= 0 ? '漲' : '跌';
-                const isCorrect = stock.prediction === actual;
-                if (isCorrect) correctCount++;
+            STOCKS.forEach(stock => {
+                const data = stockRealtimeData[stock.code];
+                const price = data?.current_price || '--';
+                const changePct = data?.change_pct ? parseFloat(data.change_pct).toFixed(2) : '--';
+                const prediction = data?.prediction || '漲';
+                const confidence = data?.confidence || '--';
+                const changeClass = parseFloat(changePct) >= 0 ? 'text-green-400' : 'text-red-400';
                 
-                // 卡片
-                cardsHTML += `
-                    <div class="bg-gray-700 rounded-lg p-3 ${isCorrect && stock.result ? 'prediction-correct' : stock.result ? 'prediction-wrong' : ''}">
-                        <div class="text-sm text-gray-400">${stock.code}</div>
-                        <div class="text-lg font-bold ${stock.prediction === '漲' ? 'text-green-400' : 'text-red-400'}">${stock.prediction}</div>
-                        <div class="text-xs text-gray-500">${stock.confidence}% 信心度</div>
-                        ${stock.result ? `<div class="text-xs ${isCorrect ? 'text-green-400' : 'text-red-400'}">${isCorrect ? '✅ 正確' : '❌ 錯誤'}</div>` : ''}
+                // 價格卡片
+                priceHTML += `
+                    <div class="bg-gray-700 rounded-lg p-3">
+                        <div class="text-sm text-gray-400">${stock.code} ${stock.name}</div>
+                        <div class="text-2xl font-bold">${price}</div>
+                        <div class="text-sm ${changeClass}">${changePct}%</div>
                     </div>
                 `;
                 
@@ -396,23 +304,17 @@
                 tableHTML += `
                     <tr class="border-b border-gray-700">
                         <td class="py-2">${stock.code} ${stock.name}</td>
+                        <td class="text-center py-2 font-bold">${price}</td>
+                        <td class="text-center py-2 ${changeClass}">${changePct}%</td>
                         <td class="text-center py-2">
-                            <span class="px-2 py-1 rounded ${stock.prediction === '漲' ? 'bg-green-600' : 'bg-red-600'}">${stock.prediction}</span>
+                            <span class="px-2 py-1 rounded ${prediction === '漲' ? 'bg-green-600' : 'bg-red-600'}">${prediction}</span>
                         </td>
-                        <td class="text-center py-2">
-                            <span class="px-2 py-1 rounded ${actual === '漲' ? 'bg-green-600' : 'bg-red-600'}">${actual}</span>
-                        </td>
-                        <td class="text-center py-2 ${change >= 0 ? 'text-green-400' : 'text-red-400'}">
-                            ${change.toFixed(2)}%
-                        </td>
-                        <td class="text-center py-2">
-                            ${stock.result ? (isCorrect ? '<span class="text-green-400">✓</span>' : '<span class="text-red-400">✗</span>') : '<span class="text-gray-500">-</span>'}
-                        </td>
+                        <td class="text-center py-2">${confidence}%</td>
                     </tr>
                 `;
             });
             
-            cardsContainer.innerHTML = cardsHTML;
+            priceCards.innerHTML = priceHTML;
             tableBody.innerHTML = tableHTML;
         }
 
@@ -421,7 +323,7 @@
             const container = document.getElementById('chartContainer');
             chart = LightweightCharts.createChart(container, {
                 width: container.clientWidth,
-                height: 320,
+                height: 384,
                 layout: {
                     background: { type: 'solid', color: '#1f2937' },
                     textColor: '#d1d5db'
@@ -448,22 +350,24 @@
             chart.timeScale().fitContent();
             
             window.addEventListener('resize', () => {
-                chart.resize(container.clientWidth, 320);
+                chart.resize(container.clientWidth, 384);
             });
         }
 
-        // 生成 K線數據
+        // 生成 K線數據（使用真實價格範圍）
         function generateCandleData() {
             const data = [];
-            let basePrice = currentStock === '2330' ? 1700 : 
-                           currentStock === '2317' ? 180 : 50;
+            const stockInfo = stockRealtimeData[currentStock];
+            let basePrice = stockInfo?.current_price || 
+                           (currentStock === '2330' ? 1700 : 
+                            currentStock === '2317' ? 180 : 50);
             
-            for (let i = 30; i >= 0; i--) {
+            for (let i = 60; i >= 0; i--) {
                 const date = new Date();
                 date.setDate(date.getDate() - i);
                 const time = date.toISOString().split('T')[0];
                 
-                const volatility = basePrice * 0.02;
+                const volatility = basePrice * 0.025;
                 const open = basePrice + (Math.random() - 0.5) * volatility;
                 const close = open + (Math.random() - 0.5) * volatility;
                 const high = Math.max(open, close) + Math.random() * volatility * 0.5;
@@ -488,33 +392,58 @@
             chart.timeScale().fitContent();
         }
 
-        async function loadKline() {
-            updateChart();
-        }
-
+        // 載入技術指標
         async function loadIndicators() {
-            // 模擬技術指標數據
-            document.getElementById('currentPrice').textContent = '1760';
-            document.getElementById('changePercent').textContent = '-1.12%';
-            document.getElementById('rsi').textContent = '45.2';
-            document.getElementById('macd').textContent = '-2.3';
-            document.getElementById('ma5').textContent = '1755';
-            document.getElementById('ma20').textContent = '1740';
-            document.getElementById('confidence').textContent = '90%';
-            
-            document.getElementById('predictionResult').textContent = '漲';
-            document.getElementById('predictionResult').className = 'text-3xl font-bold text-green-400';
-            
-            document.getElementById('factorsList').innerHTML = `
-                <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>1. RSI 技術指標</span><span class="text-yellow-400">25.3%</span></div>
-                <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>2. MACD 趨勢</span><span class="text-yellow-400">22.1%</span></div>
-                <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>3. 成交量變化</span><span class="text-yellow-400">18.5%</span></div>
-            `;
+            try {
+                const res = await fetch(`${API_BASE}/stocks/${currentStock}/prediction`);
+                const data = await res.json();
+                
+                document.getElementById('currentPrice').textContent = data.current_price || '--';
+                document.getElementById('changePercent').textContent = (data.change_pct || '--') + '%';
+                document.getElementById('rsi').textContent = data.indicators?.rsi?.toFixed(2) || '--';
+                document.getElementById('macd').textContent = data.indicators?.macd?.toFixed(2) || '--';
+                document.getElementById('ma5').textContent = data.indicators?.ma5?.toFixed(0) || '--';
+                document.getElementById('ma20').textContent = data.indicators?.ma20?.toFixed(0) || '--';
+                document.getElementById('volume').textContent = data.indicators?.volume_change ? (data.indicators.volume_change * 100).toFixed(0) + '%' : '--';
+                document.getElementById('confidence').textContent = (data.confidence || '--') + '%';
+                
+                // 預測結果
+                const predResult = document.getElementById('predictionResult');
+                predResult.textContent = data.prediction || '載入中...';
+                predResult.className = `text-3xl font-bold ${data.prediction === '漲' ? 'text-green-400' : 'text-red-400'}`;
+                
+                // 因素
+                if (data.top_factors) {
+                    document.getElementById('factorsList').innerHTML = data.top_factors.map((f, i) => `
+                        <div class="flex justify-between bg-gray-700 rounded px-3 py-2">
+                            <span>${i+1}. ${f.feature}</span>
+                            <span class="text-yellow-400">${(f.importance * 100).toFixed(1)}%</span>
+                        </div>
+                    `).join('');
+                }
+                
+            } catch (e) {
+                // 使用緩存數據
+                const data = stockRealtimeData[currentStock];
+                if (data) {
+                    document.getElementById('currentPrice').textContent = data.current_price || '--';
+                    document.getElementById('changePercent').textContent = (data.change_pct || '--') + '%';
+                    document.getElementById('confidence').textContent = (data.confidence || '--') + '%';
+                    
+                    const predResult = document.getElementById('predictionResult');
+                    predResult.textContent = data.prediction || '漲';
+                    predResult.className = `text-3xl font-bold ${data.prediction === '漲' ? 'text-green-400' : 'text-red-400'}`;
+                }
+                
+                document.getElementById('factorsList').innerHTML = `
+                    <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>1. RSI 技術指標</span><span class="text-yellow-400">25.3%</span></div>
+                    <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>2. MACD 趨勢</span><span class="text-yellow-400">22.1%</span></div>
+                    <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>3. 成交量變化</span><span class="text-yellow-400">18.5%</span></div>
+                `;
+            }
         }
 
-        // 啟動
         init();
-        updateDisplayDate();
     </script>
 </body>
 </html>
