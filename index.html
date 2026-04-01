@@ -49,7 +49,10 @@
     <div class="container mx-auto px-4">
         <!-- 即時報價與預測對照區 -->
         <div class="bg-gray-800 rounded-xl p-4 mb-4 border border-gray-700">
-            <h2 class="text-lg font-semibold mb-3">🎯 今日報價與預測</h2>
+            <div class="flex justify-between items-center mb-3">
+                <h2 class="text-lg font-semibold">🎯 今日報價與預測</h2>
+                <button onclick="refreshPrices()" class="px-3 py-1 bg-blue-600 rounded hover:bg-blue-700 text-sm">🔄 重新整理</button>
+            </div>
             
             <!-- 即時報價卡片 -->
             <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4" id="priceCards">
@@ -173,12 +176,22 @@
         // 初始化
         async function init() {
             document.getElementById('datePicker').value = currentDate;
-            await loadAllStockData();  // 載入所有股票即時數據
+            await loadAllStockData();
             await loadStockTabs();
             await loadPredictionComparison();
             initChart();
             loadHistory();
             updateDisplayDate();
+        }
+
+        // 重新整理價格
+        async function refreshPrices() {
+            const btn = event.target;
+            btn.textContent = '載入中...';
+            await loadAllStockData();
+            await loadPredictionComparison();
+            await loadIndicators();
+            btn.textContent = '🔄 重新整理';
         }
 
         // 從 API 載入所有股票即時數據
@@ -191,9 +204,10 @@
                     data.predictions.forEach(p => {
                         stockRealtimeData[p.stock_code] = p;
                     });
+                    console.log('更新價格:', stockRealtimeData);
                 }
             } catch (e) {
-                console.log('無法獲取即時數據，使用備用數據');
+                console.log('無法獲取即時數據');
             }
         }
 
@@ -269,9 +283,9 @@
             currentStock = code;
             loadStockTabs();
             await Promise.all([
-                loadPredictionComparison(),
                 loadIndicators()
             ]);
+            await loadKlineHistory();
             updateChart();
         }
 
@@ -291,7 +305,6 @@
                 const confidence = data?.confidence || '--';
                 const changeClass = parseFloat(changePct) >= 0 ? 'text-green-400' : 'text-red-400';
                 
-                // 價格卡片
                 priceHTML += `
                     <div class="bg-gray-700 rounded-lg p-3">
                         <div class="text-sm text-gray-400">${stock.code} ${stock.name}</div>
@@ -300,7 +313,6 @@
                     </div>
                 `;
                 
-                // 表格
                 tableHTML += `
                     <tr class="border-b border-gray-700">
                         <td class="py-2">${stock.code} ${stock.name}</td>
@@ -345,8 +357,7 @@
                 wickDownColor: '#ef4444'
             });
             
-            generateCandleData();
-            candleSeries.setData(candleData);
+            loadKlineHistory();
             chart.timeScale().fitContent();
             
             window.addEventListener('resize', () => {
@@ -354,7 +365,33 @@
             });
         }
 
-        // 生成 K線數據（使用真實價格範圍）
+        // 從 API 載入 K線歷史數據
+        async function loadKlineHistory() {
+            try {
+                const res = await fetch(`${API_BASE}/stocks/${currentStock}/history?days=60`);
+                const data = await res.json();
+                
+                if (data && data.data && data.data.length > 0) {
+                    candleData = data.data.map(d => ({
+                        time: d.date,
+                        open: d.open,
+                        high: d.high,
+                        low: d.low,
+                        close: d.close
+                    }));
+                    
+                    if (candleSeries) {
+                        candleSeries.setData(candleData);
+                        chart.timeScale().fitContent();
+                    }
+                    console.log('載入K線數據:', candleData.length, '筆');
+                }
+            } catch (e) {
+                console.log('無法獲取K線數據，使用模擬');
+                generateCandleData();
+            }
+        }
+
         function generateCandleData() {
             const data = [];
             const stockInfo = stockRealtimeData[currentStock];
@@ -381,15 +418,14 @@
         }
 
         function updateChart() {
-            generateCandleData();
-            candleSeries.setData(candleData);
-            chart.timeScale().fitContent();
+            if (candleSeries) {
+                candleSeries.setData(candleData);
+                chart.timeScale().fitContent();
+            }
         }
 
         function changePeriod(period) {
-            generateCandleData();
-            candleSeries.setData(candleData);
-            chart.timeScale().fitContent();
+            loadKlineHistory();
         }
 
         // 載入技術指標
@@ -407,12 +443,10 @@
                 document.getElementById('volume').textContent = data.indicators?.volume_change ? (data.indicators.volume_change * 100).toFixed(0) + '%' : '--';
                 document.getElementById('confidence').textContent = (data.confidence || '--') + '%';
                 
-                // 預測結果
                 const predResult = document.getElementById('predictionResult');
                 predResult.textContent = data.prediction || '載入中...';
                 predResult.className = `text-3xl font-bold ${data.prediction === '漲' ? 'text-green-400' : 'text-red-400'}`;
                 
-                // 因素
                 if (data.top_factors) {
                     document.getElementById('factorsList').innerHTML = data.top_factors.map((f, i) => `
                         <div class="flex justify-between bg-gray-700 rounded px-3 py-2">
@@ -423,23 +457,7 @@
                 }
                 
             } catch (e) {
-                // 使用緩存數據
-                const data = stockRealtimeData[currentStock];
-                if (data) {
-                    document.getElementById('currentPrice').textContent = data.current_price || '--';
-                    document.getElementById('changePercent').textContent = (data.change_pct || '--') + '%';
-                    document.getElementById('confidence').textContent = (data.confidence || '--') + '%';
-                    
-                    const predResult = document.getElementById('predictionResult');
-                    predResult.textContent = data.prediction || '漲';
-                    predResult.className = `text-3xl font-bold ${data.prediction === '漲' ? 'text-green-400' : 'text-red-400'}`;
-                }
-                
-                document.getElementById('factorsList').innerHTML = `
-                    <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>1. RSI 技術指標</span><span class="text-yellow-400">25.3%</span></div>
-                    <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>2. MACD 趨勢</span><span class="text-yellow-400">22.1%</span></div>
-                    <div class="flex justify-between bg-gray-700 rounded px-3 py-2"><span>3. 成交量變化</span><span class="text-yellow-400">18.5%</span></div>
-                `;
+                console.log('使用備用數據');
             }
         }
 
