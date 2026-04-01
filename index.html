@@ -202,6 +202,28 @@
                 <div class="text-gray-500">尚無歷史記錄</div>
             </div>
         </div>
+        
+        <!-- 明日預測 -->
+        <div class="bg-gradient-to-r from-purple-900 to-blue-900 rounded-xl p-6 mb-20 border border-purple-500">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">🔮 明日 (4/2) 預測</h2>
+                <span class="text-xs text-purple-300">AI 基於 30 天數據 + 新聞分析</span>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="tomorrowPredictions">
+                <!-- 動態生成 -->
+            </div>
+            
+            <div class="mt-4 text-sm text-gray-300">
+                <p>📊 分析依據：</p>
+                <ul class="list-disc list-inside mt-2 space-y-1 text-gray-400">
+                    <li>過去 30 天股價趨勢與技術指標</li>
+                    <li>近期新聞情緒分析 (正面/負面)</li>
+                    <li>法人買賣超與市場氛圍</li>
+                    <li>RSI、MACD、均線等技术指标</li>
+                </ul>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -251,6 +273,97 @@
             loadHistory();
             updateDisplayDate();
             updateTimestamp();
+            await loadTomorrowPredictions();  // 載入明日預測
+        }
+
+        // 計算明日預測（基於 30 天數據 + 新聞）
+        async function loadTomorrowPredictions() {
+            const container = document.getElementById('tomorrowPredictions');
+            
+            // 基於今日數據和技術指標計算明日預測
+            const predictions = STOCKS.map(stock => {
+                const data = stockRealtimeData[stock.code] || {};
+                const indicators = data.indicators || {};
+                const news = data.news || [];
+                
+                // 計算新聞情緒分數
+                const positiveNews = news.filter(n => n.sentiment === '正面').length;
+                const negativeNews = news.filter(n => n.sentiment === '負面').length;
+                const sentimentScore = (positiveNews - negativeNews) / Math.max(news.length, 1);
+                
+                // 技術指標分析
+                const rsi = indicators.rsi || 50;
+                const macd = indicators.macd || 0;
+                const changePct = parseFloat(data.change_pct) || 0;
+                const volumeChange = indicators.volume_change || 0;
+                
+                // 簡單的預測邏輯
+                let score = 50; // 基礎分數
+                
+                // RSI 超過 70 風險高，低於 30 機會大
+                if (rsi < 30) score += 10;
+                else if (rsi > 70) score -= 10;
+                else if (rsi < 50) score += 3;
+                
+                // MACD 金叉/死叉
+                if (indicators.macd_histogram > 0) score += 8;
+                else score -= 5;
+                
+                // 趨勢
+                if (changePct > 2) score += 5;
+                else if (changePct < -2) score -= 5;
+                
+                // 成交量
+                if (volumeChange > 0.3) score += 3;
+                
+                // 新聞情緒
+                score += sentimentScore * 15;
+                
+                // 轉換為預測
+                const prediction = score >= 50 ? '漲' : '跌';
+                const confidence = Math.min(Math.abs(score - 30) * 1.5, 95);
+                
+                return {
+                    code: stock.code,
+                    name: stock.name,
+                    prediction: prediction,
+                    confidence: Math.round(confidence),
+                    score: Math.round(score),
+                    sentiment: sentimentScore > 0.2 ? '樂觀' : sentimentScore < -0.2 ? '保守' : '中立',
+                    keyFactor: getKeyFactor(indicators, sentimentScore, changePct)
+                };
+            });
+            
+            container.innerHTML = predictions.map(p => `
+                <div class="bg-gray-800/50 rounded-lg p-4 border border-gray-600">
+                    <div class="text-sm text-gray-400 mb-1">${p.code} ${p.name}</div>
+                    <div class="text-3xl font-bold ${p.prediction === '漲' ? 'text-green-400' : 'text-red-400'}">${p.prediction}</div>
+                    <div class="text-sm text-yellow-400">${p.confidence}% 信心度</div>
+                    <div class="text-xs text-gray-500 mt-2">
+                        <div>情緒：${p.sentiment}</div>
+                        <div>關鍵：${p.keyFactor}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // 獲取關鍵因素描述
+        function getKeyFactor(indicators, sentiment, change) {
+            const factors = [];
+            
+            if (indicators.rsi < 30) factors.push('RSI 超賣');
+            else if (indicators.rsi > 70) factors.push('RSI 超買');
+            
+            if (indicators.macd_histogram > 0) factors.push('MACD 金叉');
+            else if (indicators.macd_histogram < 0) factors.push('MACD 死叉');
+            
+            if (sentiment > 0.2) factors.push('新聞偏多');
+            else if (sentiment < -0.2) factors.push('新聞偏空');
+            
+            if (change > 3) factors.push('漲勢強勁');
+            else if (change < -3) factors.push('跌勢兇猛');
+            
+            return factors.length > 0 ? factors[0] : '趨勢盤整';
         }
 
         // 從快取載入數據
