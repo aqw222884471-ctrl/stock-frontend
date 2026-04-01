@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>台股智能預測系統</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .card { transition: transform 0.2s; }
+        .card:hover { transform: translateY(-2px); }
+        .pulse { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-blue-600 to-purple-600 py-6 shadow-lg">
+        <div class="container mx-auto px-4">
+            <h1 class="text-3xl font-bold">📈 台股智能預測系統</h1>
+            <p class="text-blue-100 mt-2">AI 驅動的股票趨勢預測 · 持續學習優化</p>
+        </div>
+    </header>
+
+    <!-- Stats -->
+    <div class="container mx-auto px-4 py-6">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-gray-400 text-sm">監股票數</div>
+                <div class="text-2xl font-bold" id="totalStocks">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-gray-400 text-sm">預計上漲</div>
+                <div class="text-2xl font-bold text-green-400" id="predictUp">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-gray-400 text-sm">預計下跌</div>
+                <div class="text-2xl font-bold text-red-400" id="predictDown">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                <div class="text-gray-400 text-sm">模型準確率</div>
+                <div class="text-2xl font-bold text-yellow-400" id="accuracy">-</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stock Cards -->
+    <div class="container mx-auto px-4 py-6">
+        <h2 class="text-xl font-semibold mb-4">📊 今日預測</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="stockCards">
+            <div class="text-gray-400">載入中...</div>
+        </div>
+    </div>
+
+    <!-- Detail Section -->
+    <div class="container mx-auto px-4 py-6">
+        <h2 class="text-xl font-semibold mb-4">🔍 預測詳情</h2>
+        <div id="detailSection">
+            <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                <p class="text-gray-400">點擊上方股票卡片查看預測解釋</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Learning Section -->
+    <div class="container mx-auto px-4 py-6 pb-20">
+        <h2 class="text-xl font-semibold mb-4">🧠 學習記錄</h2>
+        <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <h3 class="font-medium mb-2">預測 vs 實際對照</h3>
+                    <div id="predictionHistory" class="text-gray-400 text-sm">
+                        收集數據中...
+                    </div>
+                </div>
+                <div>
+                    <h3 class="font-medium mb-2">誤差分析</h3>
+                    <div id="errorAnalysis" class="text-gray-400 text-sm">
+                        收集數據中...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'https://stock-predict-ai-1-5lhv.onrender.com';
+        
+        // 載入儀表板
+        async function loadDashboard() {
+            try {
+                const res = await fetch(`${API_BASE}/dashboard`);
+                const data = await res.json();
+                
+                // 更新統計
+                document.getElementById('totalStocks').textContent = data.predictions.length;
+                document.getElementById('predictUp').textContent = data.performance?.by_prediction?.漲?.correct || 0;
+                document.getElementById('predictDown').textContent = data.performance?.by_prediction?.跌?.correct || 0;
+                document.getElementById('accuracy').textContent = (data.performance?.accuracy || 0) + '%';
+                
+                // 生成股票卡片
+                const cards = document.getElementById('stockCards');
+                cards.innerHTML = data.predictions.map(p => `
+                    <div class="card bg-gray-800 rounded-lg p-4 border border-gray-700 cursor-pointer" 
+                         onclick="showDetail('${p.stock_code}')">
+                        <div class="flex justify-between items-center mb-3">
+                            <div>
+                                <div class="font-bold">${p.stock_code}</div>
+                                <div class="text-gray-400 text-sm">${p.stock_name}</div>
+                            </div>
+                            <div class="text-2xl ${getPredictionColor(p.prediction)}">${p.prediction}</div>
+                        </div>
+                        <div class="text-center mb-3">
+                            <div class="text-3xl font-bold">${p.confidence}%</div>
+                            <div class="text-gray-400 text-xs">信心度</div>
+                        </div>
+                        <div class="text-sm text-gray-400">
+                            <div>現價: ${p.current_price}</div>
+                            <div>漲跌: ${p.change_pct}%</div>
+                        </div>
+                    </div>
+                `).join('');
+                
+            } catch (e) {
+                console.error(e);
+                document.getElementById('stockCards').innerHTML = '<div class="text-red-400">載入失敗，請確認API正在運行</div>';
+            }
+        }
+        
+        function getPredictionColor(prediction) {
+            if (prediction === '漲') return 'text-green-400';
+            if (prediction === '跌') return 'text-red-400';
+            return 'text-yellow-400';
+        }
+        
+        // 顯示詳情
+        async function showDetail(code) {
+            try {
+                const res = await fetch(`${API_BASE}/stocks/${code}/prediction`);
+                const pred = await res.json();
+                
+                const explainRes = await fetch(`${API_BASE}/stocks/${code}/explain`);
+                const explain = await explainRes.json();
+                
+                const detail = document.getElementById('detailSection');
+                detail.innerHTML = `
+                    <div class="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-xl font-bold">${pred.stock_name} (${pred.stock_code})</h3>
+                            <div class="text-right">
+                                <div class="text-3xl font-bold ${getPredictionColor(pred.prediction)}">${pred.prediction}</div>
+                                <div class="text-gray-400">信心度: ${pred.confidence}%</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 技術指標 -->
+                        <div class="mb-4">
+                            <h4 class="font-medium mb-2">📊 技術指標</h4>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                <div>RSI: ${pred.indicators?.rsi || '-'}</div>
+                                <div>MACD: ${pred.indicators?.macd || '-'}</div>
+                                <div>MA20: ${pred.indicators?.ma20 || '-'}</div>
+                                <div>漲跌幅: ${pred.indicators?.change_pct || '-'}%</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 影響因素 -->
+                        <div class="mb-4">
+                            <h4 class="font-medium mb-2">🔍 影響因素排序</h4>
+                            <div class="space-y-2">
+                                ${(explain.factors || []).map((f, i) => `
+                                    <div class="flex items-center justify-between bg-gray-700 rounded p-2">
+                                        <span class="text-sm">${i+1}. ${f.feature_name}</span>
+                                        <span class="text-sm text-yellow-400">${(f.importance * 100).toFixed(1)}%</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <!-- 新聞 -->
+                        <div class="mb-4">
+                            <h4 class="font-medium mb-2">📰 最新新聞</h4>
+                            <div class="space-y-2">
+                                ${(pred.news || []).map(n => `
+                                    <div class="flex justify-between items-center bg-gray-700 rounded p-2">
+                                        <span class="text-sm">${n.title}</span>
+                                        <span class="text-xs ${n.sentiment === '正面' ? 'text-green-400' : n.sentiment === '負面' ? 'text-red-400' : 'text-gray-400'}">${n.sentiment}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <!-- 漲跌原因 -->
+                        <div>
+                            <h4 class="font-medium mb-2">💡 漲跌原因分析</h4>
+                            <div class="bg-gray-700 rounded p-3 text-sm text-gray-300 whitespace-pre-line">
+${explain.explanation || '分析中...'}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        
+        // 初始載入
+        loadDashboard();
+        
+        // 每分鐘更新
+        setInterval(loadDashboard, 60000);
+    </script>
+</body>
+</html>
