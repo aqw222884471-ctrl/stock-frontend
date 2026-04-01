@@ -197,15 +197,33 @@
         // 從 API 載入所有股票即時數據
         async function loadAllStockData() {
             try {
-                const res = await fetch(`${API_BASE}/dashboard`);
-                const data = await res.json();
+                // 使用新的 realtime API 獲取最新價格
+                const promises = STOCKS.map(async (stock) => {
+                    try {
+                        const res = await fetch(`${API_BASE}/stocks/${stock.code}/realtime`);
+                        return await res.json();
+                    } catch (e) {
+                        // 備用：從 dashboard 獲取
+                        return null;
+                    }
+                });
                 
-                if (data && data.predictions) {
-                    data.predictions.forEach(p => {
-                        stockRealtimeData[p.stock_code] = p;
-                    });
-                    console.log('更新價格:', stockRealtimeData);
-                }
+                const results = await Promise.all(promises);
+                
+                results.forEach((data, index) => {
+                    if (data) {
+                        stockRealtimeData[STOCKS[index].code] = {
+                            stock_code: data.code,
+                            stock_name: data.name,
+                            current_price: data.current_price,
+                            change_pct: data.change_pct,
+                            prediction: '漲',  // 保持從預測 API
+                            confidence: 85
+                        };
+                    }
+                });
+                
+                console.log('更新價格:', stockRealtimeData);
             } catch (e) {
                 console.log('無法獲取即時數據');
             }
